@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>USP AI Chatbot</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    #chat-toggle {
+      position: fixed; bottom: 20px; right: 20px;
+      background-color: #0E2632; color: white;
+      border: none; border-radius: 50%; width: 60px; height: 60px;
+      font-size: 28px; cursor: pointer; z-index: 9999;
+    }
+    #chat-panel {
+      display: none; flex-direction: column;
+      position: fixed; bottom: 90px; right: 20px;
+      width: 360px; height: 500px;
+      background: white; border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      z-index: 9998; font-family: sans-serif;
+    }
+    #chat-header {
+      background-color: #0E2632; color: white;
+      padding: 12px; text-align: center;
+      font-weight: bold;
+    }
+    #chat-messages {
+      flex: 1; padding: 12px;
+      overflow-y: auto; font-size: 14px;
+    }
+    #chat-input {
+      display: flex; flex-direction: column;
+      padding: 8px; border-top: 1px solid #eee;
+    }
+    #chat-input textarea {
+      resize: none; font-size: 14px;
+      padding: 8px; border: 1px solid #ccc; border-radius: 8px;
+      margin-bottom: 6px;
+    }
+    #chat-input-controls {
+      display: flex; gap: 6px; align-items: center;
+    }
+    #chat-input button, #mic-btn {
+      background-color: #0E2632; color: white;
+      border: none; padding: 8px 10px; border-radius: 8px;
+      cursor: pointer;
+    }
+    .user-msg { font-weight: bold; margin-bottom: 4px; }
+    .bot-msg { margin-bottom: 12px; position: relative; }
+    .copy-btn {
+      position: absolute; top: 0; right: 0;
+      background: #ddd; border: none;
+      font-size: 12px; padding: 2px 5px;
+      cursor: pointer; border-radius: 3px;
+    }
+    #image-upload-preview {
+      max-height: 80px; margin-bottom: 6px;
+    }
+    #toast {
+      position: fixed; bottom: 80px; right: 20px;
+      background: #0E2632; color: white;
+      padding: 10px 20px; border-radius: 5px;
+      display: none; z-index: 10000;
+    }
+    #recording-animation {
+      display: none;
+      width: 80px; height: 10px; margin-left: 10px;
+    }
+    .bar {
+      display: inline-block; width: 6px; height: 10px;
+      margin-right: 3px; background: red; animation: pulse 1s infinite;
+    }
+    .bar:nth-child(2) { animation-delay: 0.2s; }
+    .bar:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes pulse {
+      0%, 100% { transform: scaleY(0.5); }
+      50% { transform: scaleY(1.5); }
+    }
+    #download-controls {
+      display: flex; gap: 6px; justify-content: flex-end;
+      padding: 4px 8px; border-top: 1px solid #eee;
+    }
+  </style>
+</head>
+<body>
+
+<!-- 🔘 Floating button -->
+<button id="chat-toggle">💬</button>
+
+<!-- 💬 Chat panel -->
+<div id="chat-panel">
+  <div id="chat-header">USP Assistant</div>
+  <div id="chat-messages"></div>
+  <div id="chat-input">
+    <textarea id="user-input" rows="1" placeholder="Ask about TPE, TPV, gaskets..."></textarea>
+    <img id="image-upload-preview" style="display:none;" />
+    <input type="file" id="image-upload" accept="image/*" />
+    <div id="chat-input-controls">
+      <button onclick="sendMessage()">Send</button>
+      <button id="mic-btn" onclick="startSpeech()">🎤</button>
+      <div id="recording-animation">
+        <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+      </div>
+    </div>
+  </div>
+  <div id="download-controls">
+    <button onclick="downloadHistory('txt')">Download TXT</button>
+  </div>
+</div>
+
+<!-- 🍞 Toast -->
+<div id="toast">Session restarted due to inactivity</div>
+
+<!-- 🔊 Sound effects -->
+<audio id="send-sound" src="https://cdn.jsdelivr.net/gh/ParridhiGPT/sfx/send.mp3"></audio>
+<audio id="receive-sound" src="https://cdn.jsdelivr.net/gh/ParridhiGPT/sfx/receive.mp3"></audio>
+
+<!-- 🧠 Chat Logic -->
+<script>
+const toggleBtn = document.getElementById("chat-toggle");
+const chatPanel = document.getElementById("chat-panel");
+const messages = document.getElementById("chat-messages");
+const userInput = document.getElementById("user-input");
+const sendSound = document.getElementById("send-sound");
+const receiveSound = document.getElementById("receive-sound");
+const imageInput = document.getElementById("image-upload");
+const imagePreview = document.getElementById("image-upload-preview");
+const toastEl = document.getElementById("toast");
+const recordingAnimation = document.getElementById("recording-animation");
+let lastInputWasVoice = false;
+let chatHistory = [];
+
+toggleBtn.onclick = () => {
+  chatPanel.style.display = chatPanel.style.display === "flex" ? "none" : "flex";
+};
+
+userInput.addEventListener("keydown", function (e) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+imageInput.onchange = () => {
+  const file = imageInput.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = e => {
+      imagePreview.src = e.target.result;
+      imagePreview.style.display = "block";
+    };
+    reader.readAsDataURL(file);
+  }
+};
+
+function showToast() {
+  toastEl.style.display = "block";
+  setTimeout(() => toastEl.style.display = "none", 3000);
+}
+
+function startSpeech() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { alert("SpeechRecognition not supported."); return; }
+  const r = new SR();
+  r.lang = "en-IN";
+  r.start();
+  userInput.placeholder = "🎙️ Listening...";
+  recordingAnimation.style.display = "inline-block";
+  r.onresult = function (event) {
+    const text = event.results[0][0].transcript;
+    userInput.value = text;
+    userInput.placeholder = "Ask your question...";
+    recordingAnimation.style.display = "none";
+    lastInputWasVoice = true;
+    sendMessage(true);
+  };
+  r.onerror = () => {
+    userInput.placeholder = "Ask your question...";
+    recordingAnimation.style.display = "none";
+    lastInputWasVoice = false;
+  };
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    showToast();
+    toastEl.innerText = "Copied to clipboard!";
+    setTimeout(() => toastEl.innerText = "Session restarted due to inactivity", 3000);
+  });
+}
+
+function downloadHistory(format) {
+  let content;
+  if (format === 'json') {
+    content = JSON.stringify(chatHistory, null, 2);
+  } else {
+    content = chatHistory.map(e => `${e.sender}: ${e.text}`).join('\n');
+  }
+  const blob = new Blob([content], { type: "text/plain" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `chat_history.${format}`;
+  link.click();
+}
+
+function typeHtml(botElem, htmlString, speed = 20) {
+  let i = 0;
+  const len = htmlString.length;
+  const typer = setInterval(() => {
+    botElem.innerHTML = "🤖 " + htmlString.slice(0, i++);
+    messages.scrollTop = messages.scrollHeight;
+    if (i >= len) clearInterval(typer);
+  }, speed);
+}
+
+async function sendMessage(fromMic = false) {
+  const question = userInput.value.trim();
+  const file = imageInput.files[0];
+  if (!question && !file) return;
+
+  messages.innerHTML += `<div class="user-msg">👤 ${question || "(Image sent)"}</div>`;
+  chatHistory.push({ sender: "User", text: question || "(Image sent)" });
+  userInput.value = "";
+  imageInput.value = "";
+  imagePreview.style.display = "none";
+  sendSound.play();
+
+  const typingMsg = document.createElement("div");
+  typingMsg.className = "bot-msg";
+  typingMsg.id = "typing-msg";
+  typingMsg.innerHTML = "🤖 <i>typing...</i>";
+  messages.appendChild(typingMsg);
+  messages.scrollTop = messages.scrollHeight;
+
+  try {
+    let res;
+    if (file) {
+      const form = new FormData();
+      form.append("image", file);
+      form.append("question", question);
+      res = await fetch("http://127.0.0.1:5000/chat", { method: "POST", body: form });
+    } else {
+      res = await fetch("http://127.0.0.1:5000/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, voice: fromMic || lastInputWasVoice })
+      });
+    }
+
+    const data = await res.json();
+    if (data.session_reset) showToast();
+    typingMsg.remove();
+
+    const botMsg = document.createElement("div");
+    botMsg.className = "bot-msg";
+    messages.appendChild(botMsg);
+
+    const fullText = (data.answer || "Sorry, no response.").trim();
+    chatHistory.push({ sender: "Bot", text: fullText });
+    const htmlReady = fullText.replace(/\n/g, "<br>");
+    typeHtml(botMsg, htmlReady, 15);
+
+    // Add copy button
+    const copyBtn = document.createElement("button");
+    copyBtn.innerText = "Copy";
+    copyBtn.className = "copy-btn";
+    copyBtn.onclick = () => copyToClipboard(fullText);
+    botMsg.appendChild(copyBtn);
+
+    receiveSound.play();
+    if (data.audio) {
+      const voice = new Audio(`data:audio/mp3;base64,${data.audio}`);
+      voice.play();
+    }
+  } catch (e) {
+    typingMsg.remove();
+    messages.innerHTML += `<div class="bot-msg">🤖 Something went wrong.</div>`;
+  }
+
+  messages.scrollTop = messages.scrollHeight;
+  lastInputWasVoice = false;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+<div style="position:fixed; bottom:20px; right:20px; z-index:9999;">
+  <iframe 
+    src="https://usppolymers.in/wp-content/uploads/chatbot/chat_test.html"
+    style="width: 400px; height: 520px; border: none; border-radius: 16px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2); overflow: hidden;">
+  </iframe>
+</div>
